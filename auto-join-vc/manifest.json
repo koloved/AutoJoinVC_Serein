@@ -2,7 +2,7 @@
   "api_version": 1,
   "id": "auto-join-vc",
   "name": "AutoJoinVC",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "kolov",
   "license": "MIT",
   "source": "https://github.com/koloved/AutoJoinVC_Serein",

@@ -35,6 +35,9 @@ struct Saved {
 	muted: bool,
 	/// The panel shows a free-text ID field instead of the loaded-channel picker.
 	manual: bool,
+	/// Offer the join proposal as soon as the tool opens; this is the closest the host
+	/// allows to the original "join on startup", and it still needs Apply.
+	propose_open: bool,
 }
 
 impl Default for Saved {
@@ -44,6 +47,7 @@ impl Default for Saved {
 			deafened: true,
 			muted: false,
 			manual: false,
+			propose_open: true,
 		}
 	}
 }
@@ -147,9 +151,10 @@ fn channel_options(app: Option<&AppSnapshot>) -> Vec<String> {
 }
 
 /// The picker always offers the saved channel, even when the directory no longer lists it.
+/// An empty directory yields no picker at all, so the ID field takes over.
 fn channel_select(saved: &Saved, app: Option<&AppSnapshot>) -> Option<Element> {
 	let mut options = channel_options(app);
-	if options.is_empty() && saved.channel_id.is_empty() {
+	if options.is_empty() {
 		return None;
 	}
 	let current = options
@@ -173,6 +178,11 @@ fn channel_select(saved: &Saved, app: Option<&AppSnapshot>) -> Option<Element> {
 		options,
 		value,
 	})
+}
+
+/// Whether the panel shows the free-text ID field instead of the picker.
+fn manual_entry(saved: &Saved, app: Option<&AppSnapshot>) -> bool {
+	saved.manual || channel_select(saved, app).is_none()
 }
 
 fn yes_no(value: bool) -> &'static str {
@@ -226,7 +236,18 @@ fn status(app: Option<&AppSnapshot>, saved: &Saved) -> String {
 	lines.join("\n")
 }
 
-const HELP: &str = "Serein asks you to confirm every call change: press Join now, then Apply on the proposal. Nothing joins a call before that. The original Dorion plugin joined silently at startup; this host does not allow that.";
+/// Why the picker cannot show every joinable channel, or `None` when it can.
+fn channel_hint(app: Option<&AppSnapshot>) -> Option<&'static str> {
+	match app.and_then(|app| app.channels.as_ref()) {
+		None => Some("The loaded channel list is unavailable, so type the channel ID above."),
+		Some(directory) if directory.truncated => Some(
+			"The loaded channel list is partial and stops at the host's limit; type the channel ID above if yours is missing.",
+		),
+		Some(_) => None,
+	}
+}
+
+const HELP: &str = "The channel and the two audio choices below are remembered. Opening this tool proposes the join, and Apply confirms it: Serein never lets an extension enter a call on its own, so the original Dorion \"join silently at startup\" cannot be reproduced.";
 
 fn panel(saved: &Saved, app: Option<&AppSnapshot>, status: &str, notice: &str) -> Vec<Element> {
 	let mut elements = vec![
@@ -234,28 +255,37 @@ fn panel(saved: &Saved, app: Option<&AppSnapshot>, status: &str, notice: &str) -
 			text: "AutoJoinVC".into(),
 		},
 		Element::Text {
-			text: HELP.into(),
-		},
-		Element::Text {
 			text: status.into(),
 		},
 		Element::Separator,
 	];
-	if saved.manual {
+	// The ID field is always reachable: without it an empty channel list would leave no
+	// way to configure the plugin at all.
+	let picker = channel_select(saved, app);
+	let manual = manual_entry(saved, app);
+	if manual {
 		elements.push(Element::TextInput {
 			id: "channel-id".into(),
 			label: "Voice channel ID".into(),
 			value: saved.channel_id.clone(),
 		});
-	} else {
-		elements.push(channel_select(saved, app).unwrap_or_else(|| Element::Text {
-			text: "No voice channels are loaded yet. Connect to Discord, or tick manual entry and paste a channel ID.".into(),
-		}));
+	} else if let Some(select) = picker.clone() {
+		elements.push(select);
+	}
+	if let Some(hint) = channel_hint(app) {
+		elements.push(Element::Text { text: hint.into() });
+	}
+	if picker.is_some() {
+		elements.push(Element::Checkbox {
+			id: "manual-mode".into(),
+			label: "Enter a channel ID instead of choosing from the list".into(),
+			checked: manual,
+		});
 	}
 	elements.push(Element::Checkbox {
-		id: "manual-mode".into(),
-		label: "Enter a channel ID manually".into(),
-		checked: saved.manual,
+		id: "propose-open".into(),
+		label: "Propose joining when I open AutoJoinVC".into(),
+		checked: saved.propose_open,
 	});
 	elements.push(Element::Checkbox {
 		id: "join-deafened".into(),
@@ -291,6 +321,8 @@ fn panel(saved: &Saved, app: Option<&AppSnapshot>, status: &str, notice: &str) -
 			},
 		],
 	});
+	elements.push(Element::Separator);
+	elements.push(Element::Text { text: HELP.into() });
 	if !notice.is_empty() {
 		elements.push(Element::Text {
 			text: notice.into(),
@@ -300,9 +332,16 @@ fn panel(saved: &Saved, app: Option<&AppSnapshot>, status: &str, notice: &str) -
 }
 
 /// Read the form values this click carried; absent values keep what is already saved.
-fn merge_form(input: &Invocation, saved: &mut Saved) -> Option<&'static str> {
+fn merge_form(
+	input: &Invocation,
+	app: Option<&AppSnapshot>,
+	saved: &mut Saved,
+) -> Option<&'static str> {
 	if let Ok(Some(flag)) = input.parse_value::<bool>("manual-mode") {
 		saved.manual = flag;
+	}
+	if let Ok(Some(flag)) = input.parse_value::<bool>("propose-open") {
+		saved.propose_open = flag;
 	}
 	if let Ok(Some(flag)) = input.parse_value::<bool>("join-deafened") {
 		saved.deafened = flag;
@@ -311,7 +350,10 @@ fn merge_form(input: &Invocation, saved: &mut Saved) -> Option<&'static str> {
 		saved.muted = flag;
 	}
 	let mut problem = None;
-	if saved.manual {
+	// Read the control the panel actually rendered. The host keeps a panel's field
+	// values for the whole session, so trusting a stale hidden field would resurrect
+	// an older channel after the user picked a new one.
+	if manual_entry(saved, app) {
 		if let Some(text) = input.value("channel-id") {
 			let text = text.trim();
 			if !text.is_empty() {
@@ -335,6 +377,70 @@ fn merge_form(input: &Invocation, saved: &mut Saved) -> Option<&'static str> {
 	problem
 }
 
+/// The join proposal shared by the Join button and by opening the tool.
+fn join_proposal(
+	saved: &Saved,
+	app: Option<&AppSnapshot>,
+) -> Result<(HostEffect, String), String> {
+	if !connected(app) {
+		return Err("Not connected to Discord; join once the session is ready.".into());
+	}
+	if saved.channel_id.is_empty() {
+		return Err("Choose a voice channel first, then press Join now.".into());
+	}
+	if let Some(voice) =
+		in_call(app).filter(|voice| voice.channel_id.as_deref() == Some(saved.channel_id.as_str()))
+	{
+		if saved.deafened && !voice.deafened {
+			return Ok((
+				HostEffect::SetVoice {
+					muted: voice.muted,
+					deafened: true,
+				},
+				"Already connected to that channel; proposing to deafen it.".into(),
+			));
+		}
+		return Err("Already connected to that channel.".into());
+	}
+	let notice = format!(
+		"Proposed: join {} (deafened: {}, microphone muted: {}). Press Apply to continue.",
+		channel_name(app, &saved.channel_id),
+		yes_no(saved.deafened),
+		yes_no(saved.muted)
+	);
+	Ok((
+		HostEffect::AppAction {
+			action: AppAction::JoinVoice {
+				channel_id: saved.channel_id.clone(),
+				ring: false,
+				muted: saved.muted,
+				deafened: saved.deafened,
+			},
+		},
+		notice,
+	))
+}
+
+fn propose_join(
+	saved: &Saved,
+	app: Option<&AppSnapshot>,
+	problem: Option<&'static str>,
+	notice: &mut String,
+	effects: &mut Vec<HostEffect>,
+) {
+	if let Some(message) = problem {
+		*notice = message.to_string();
+		return;
+	}
+	match join_proposal(saved, app) {
+		Ok((effect, message)) => {
+			*notice = message;
+			effects.push(effect);
+		}
+		Err(message) => *notice = message,
+	}
+}
+
 fn handle(input: AppInvocation) -> AppOutput {
 	let mut saved = input
 		.invocation
@@ -355,46 +461,18 @@ fn handle(input: AppInvocation) -> AppOutput {
 			effects: Vec::new(),
 		};
 	}
-	let problem = merge_form(&input.invocation, &mut saved);
+	let problem = merge_form(&input.invocation, app, &mut saved);
 	let mut notice = String::new();
 	let mut effects: Vec<HostEffect> = Vec::new();
 	match input.invocation.action.as_str() {
-		"join" => {
-			if let Some(message) = problem {
-				notice = message.to_string();
-			} else if !connected(app) {
-				notice = "Not connected to Discord; join once the session is ready.".into();
-			} else if saved.channel_id.is_empty() {
-				notice = "Choose a voice channel first, then press Join now.".into();
-			} else if let Some(voice) = in_call(app)
-				.filter(|voice| voice.channel_id.as_deref() == Some(saved.channel_id.as_str()))
-			{
-				if saved.deafened && !voice.deafened {
-					notice = "Already connected to that channel; proposing to deafen it.".into();
-					effects.push(HostEffect::SetVoice {
-						muted: voice.muted,
-						deafened: true,
-					});
-				} else {
-					notice = "Already connected to that channel.".into();
-				}
-			} else {
-				notice = format!(
-					"Proposed: join {} (deafened: {}, microphone muted: {}). Press Apply to continue.",
-					channel_name(app, &saved.channel_id),
-					yes_no(saved.deafened),
-					yes_no(saved.muted)
-				);
-				effects.push(HostEffect::AppAction {
-					action: AppAction::JoinVoice {
-						channel_id: saved.channel_id.clone(),
-						ring: false,
-						muted: saved.muted,
-						deafened: saved.deafened,
-					},
-				});
+		// Opening the tool proposes the join straight away: that is the closest this
+		// host gets to the original "join when the client starts".
+		"open" => {
+			if saved.propose_open {
+				propose_join(&saved, app, problem, &mut notice, &mut effects);
 			}
 		}
+		"join" => propose_join(&saved, app, problem, &mut notice, &mut effects),
 		"leave" => match in_call(app) {
 			Some(voice) => {
 				notice = format!(
@@ -432,7 +510,6 @@ fn handle(input: AppInvocation) -> AppOutput {
 				None => format!("Saved {}.", channel_name(app, &saved.channel_id)),
 			};
 		}
-		"open" => {}
 		_ => return AppOutput::default(),
 	}
 	if output.set_storage_json(&saved).is_err() {
@@ -760,6 +837,16 @@ mod tests {
 	}
 
 	#[test]
+	fn a_saved_channel_without_a_directory_uses_the_id_field() {
+		let saved = Saved {
+			channel_id: CHANNEL.into(),
+			..Default::default()
+		};
+		assert!(channel_select(&saved, None).is_none());
+		assert!(manual_entry(&saved, None));
+	}
+
+	#[test]
 	fn the_wire_round_trip_matches_the_abi() {
 		let bytes = dispatch_typed(
 			br#"{"action":"open","app":{"context":{"connected":true}}}"#,
@@ -771,5 +858,128 @@ mod tests {
 			element,
 			Element::Text { text } if text.contains("Connected to Discord.")
 		)));
+	}
+
+	#[test]
+	fn opening_the_tool_proposes_the_saved_channel() {
+		let output = handle(AppInvocation {
+			invocation: Invocation {
+				action: "open".into(),
+				storage: Some(format!(r#"{{"channel_id":"{CHANNEL}","deafened":true}}"#)),
+				..Default::default()
+			},
+			app: Some(snapshot(None)),
+			..Default::default()
+		});
+		assert!(matches!(
+			output.effects.as_slice(),
+			[HostEffect::AppAction {
+				action: AppAction::JoinVoice {
+					channel_id,
+					deafened: true,
+					..
+				}
+			}] if channel_id == CHANNEL
+		));
+	}
+
+	#[test]
+	fn opening_the_tool_stays_passive_when_the_option_is_off() {
+		let output = handle(AppInvocation {
+			invocation: Invocation {
+				action: "open".into(),
+				storage: Some(format!(
+					r#"{{"channel_id":"{CHANNEL}","propose_open":false}}"#
+				)),
+				..Default::default()
+			},
+			app: Some(snapshot(None)),
+			..Default::default()
+		});
+		assert!(output.effects.is_empty());
+	}
+
+	/// The host's directory can be empty or truncated; the panel must stay configurable.
+	#[test]
+	fn an_empty_channel_list_still_offers_the_id_field() {
+		let output = handle(AppInvocation {
+			invocation: Invocation {
+				action: "open".into(),
+				..Default::default()
+			},
+			app: Some(AppSnapshot {
+				context: Some(AppContextSnapshot {
+					connected: true,
+					user: None,
+					channel: None,
+				}),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		assert!(output.output.panel.iter().any(
+			|element| matches!(element, Element::TextInput { id, .. } if id == "channel-id")
+		));
+		assert!(
+			!output
+				.output
+				.panel
+				.iter()
+				.any(|element| matches!(element, Element::Select { .. }))
+		);
+		assert!(!output.output.panel.iter().any(
+			|element| matches!(element, Element::Checkbox { id, .. } if id == "manual-mode")
+		));
+	}
+
+	#[test]
+	fn a_typed_id_is_used_before_any_channel_is_known() {
+		let mut invocation = Invocation {
+			action: "join".into(),
+			..Default::default()
+		};
+		invocation.values.insert("channel-id".into(), OTHER.into());
+		let output = handle(AppInvocation {
+			invocation,
+			app: Some(AppSnapshot {
+				context: Some(AppContextSnapshot {
+					connected: true,
+					user: None,
+					channel: None,
+				}),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		assert!(matches!(
+			output.effects.as_slice(),
+			[HostEffect::AppAction {
+				action: AppAction::JoinVoice { channel_id, .. }
+			}] if channel_id == OTHER
+		));
+	}
+
+	/// The host keeps field values for the whole panel session, so a hidden text field
+	/// must not override the picker the user actually sees.
+	#[test]
+	fn a_stale_id_field_does_not_override_the_picker() {
+		let mut invocation = Invocation {
+			action: "save".into(),
+			storage: Some(format!(r#"{{"channel_id":"{OTHER}"}}"#)),
+			..Default::default()
+		};
+		invocation
+			.values
+			.insert("channel".into(), picker_value("general", CHANNEL));
+		invocation
+			.values
+			.insert("channel-id".into(), "999".into());
+		let output = handle(AppInvocation {
+			invocation,
+			app: Some(snapshot(None)),
+			..Default::default()
+		});
+		let saved: Saved = serde_json::from_str(output.output.storage.as_deref().unwrap()).unwrap();
+		assert_eq!(saved.channel_id, CHANNEL);
 	}
 }

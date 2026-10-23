@@ -11,9 +11,14 @@ job, expressed through Serein's native tool panel and its confirmation flow.
 ## What it does
 
 - Remembers one voice channel and the audio choices to use when joining it.
+- **Opening the tool proposes the join straight away**, so getting into your
+  channel is *Open tool* → **Apply**. That is the closest Serein gets to the
+  original silent auto-join; see the next section for why.
 - Lists the voice and stage channels of the servers you have loaded, with the
   server name, so you pick a channel by name instead of pasting an ID.
-  Channels outside the loaded list can still be entered by ID.
+- Falls back to a channel ID field whenever that list is empty or cut short.
+  The host caps the list at 100 loaded channels, so large accounts may only see
+  part of it; the ID field is always one checkbox away.
 - **Join now** proposes joining that channel, deafened and/or with the
   microphone muted, depending on the saved options.
 - **Leave voice** proposes leaving the current call.
@@ -28,14 +33,14 @@ worth knowing before you install:
 
 | Dorion (Shelter) | Serein |
 | --- | --- |
-| Joined the channel silently on startup by dispatching `VOICE_CHANNEL_SELECT`. | **Cannot join silently.** A host rejects every `effects` proposal from an `activation`, `app_event`, `tick` or `message_event` handler; joining a call can transmit audio, so Serein always shows the proposal and waits for **Apply**. |
+| Joined the channel silently on startup by dispatching `VOICE_CHANNEL_SELECT`. | **Cannot join silently.** The host rejects every `effects` proposal from an `activation`, `app_event`, `tick` or `message_event` handler, and there is no setting that relaxes it. Joining a call can transmit audio, so Serein always shows the proposal and waits for **Apply** — from the panel too, which is why opening the tool is enough to get the proposal on screen. |
 | Retried up to six times, three seconds apart. | Apply re-checks that the call, account and channel are still current, and the panel re-reads the live call state each time you press a button. A stale proposal is rejected instead of following a later change. |
-| Pasted Guild ID and Voice Channel ID. | A picker built from the loaded channel directory; the guild is resolved from the channel, so the guild ID is no longer needed. Manual ID entry is still there for channels the client has not loaded. |
+| Pasted Guild ID and Voice Channel ID. | A picker built from the loaded channel directory; the guild is resolved from the channel, so the guild ID is no longer needed. A channel ID field remains for channels the client has not loaded. |
 | Toasts via `s.ui.showToast`. | The panel's own status line; Serein has no unattended toast for a passive plugin. |
 | Joined, then self-deafened after the connection settled. | `JoinVoice` takes `deafened` and `muted` directly, so the call starts deafened instead of being muted afterwards. A separate button toggles deafen on the current call. |
 
-In practice: open the tool, press **Join now**, press **Apply**. That second
-click is the host's requirement, not a limitation this plugin can work around.
+In practice: open the tool, press **Apply**. That one confirmation is the host's
+requirement, not something this plugin can work around.
 
 ## Requirements
 
@@ -49,11 +54,13 @@ click is the host's requirement, not a limitation this plugin can work around.
 2. Import `packages/auto-join-vc.serein-extension`.
 3. Review the capabilities, then enable the plugin.
 4. Open the **AutoJoinVC** card and choose **Open tool**.
-5. Pick a voice channel, set *Join deafened* / *Join with the microphone muted*,
-   and press **Join now**. Confirm the proposal with **Apply**.
+5. Pick a voice channel (or tick *Enter a channel ID instead* and paste one),
+   set *Join deafened* / *Join with the microphone muted*.
+6. **Propose joining when I open AutoJoinVC** is on by default, so the join
+   proposal is already on screen: press **Apply**.
 
 Nothing is stored about a guild, a message or a call; the plugin keeps only the
-channel ID and two checkboxes in its own storage slot.
+channel ID and its toggles in its own storage slot.
 
 ## Permissions
 
@@ -121,11 +128,15 @@ else here is MIT; see `LICENSE`.
 Порт плагина [AutoJoinVC](https://github.com/koloved/AutoJoinVC) с Dorion/Shelter
 на расширения Serein.
 
-Главное отличие: **тихо войти в канал при старте Serein не позволяет** —
-расширение не может отправить в звонок команду без подтверждения. Поэтому
-плагин запоминает канал и настройки звука, показывает их в панели и предлагает
-вход по кнопке **Join now**; вы подтверждаете его кнопкой **Apply**. Канал
-выбирается по названию из загруженных серверов, но можно ввести и ID вручную.
+Главное отличие: **тихо войти в канал при старте Serein не позволяет**, и
+настройки, снимающей это ограничение, в нём нет — расширение не может отправить
+команду входа в звонок без подтверждения. Поэтому плагин запоминает канал и
+настройки звука, а при открытии панели сразу предлагает вход: остаётся нажать
+**Apply**. Один клик подтверждения — это требование хоста, а не плагина.
+
+Канал выбирается по названию из загруженных серверов. Если список пуст или
+обрезан (хост отдаёт не больше 100 каналов), панель сразу показывает поле для
+ID — вставьте ID канала и нажмите **Join now** или **Save**.
 
 Установка: **Settings → Extensions → Import** →
 `packages/auto-join-vc.serein-extension`, проверить разрешения, включить, открыть

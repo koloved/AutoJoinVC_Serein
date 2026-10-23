@@ -59,8 +59,27 @@ fn main() -> Result<(), Box<dyn Error>> {
 		},
 	))?;
 	assert!(!open.panel.is_empty(), "open returned no panel");
-	assert!(open.effects.is_empty(), "open must stay passive");
+	assert!(
+		open.effects.is_empty(),
+		"an unconfigured panel must not propose a call"
+	);
 	println!("open: {} panel elements, no proposal", open.panel.len());
+
+	let mut reopen = Invocation {
+		action: "open".into(),
+		storage: Some(r#"{"channel_id":"20","deafened":true}"#.into()),
+		app: Some(Box::new(snapshot(false)?)),
+		..Default::default()
+	};
+	reopen.values.clear();
+	let proposed = check(invoke(&package, &reopen))?;
+	assert!(matches!(
+		proposed.effects.as_slice(),
+		[HostEffect::AppAction {
+			action: AppAction::JoinVoice { .. }
+		}]
+	));
+	println!("open with a saved channel: proposed the join");
 
 	let mut join = Invocation {
 		action: "join".into(),
