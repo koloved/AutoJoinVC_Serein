@@ -1,0 +1,51 @@
+{
+  "api_version": 1,
+  "id": "auto-join-vc",
+  "name": "AutoJoinVC",
+  "version": "1.0.0",
+  "author": "kolov",
+  "license": "MIT",
+  "source": "https://github.com/koloved/AutoJoinVC_Serein",
+  "kind": "plugin",
+  "capabilities": [
+    "app_context",
+    "channel_directory",
+    "guild_directory",
+    "voice_state",
+    "voice_connect",
+    "voice_control",
+    "storage"
+  ],
+  "actions": [
+    {
+      "id": "open",
+      "label": "Open AutoJoinVC",
+      "surface": "panel"
+    },
+    {
+      "id": "join",
+      "label": "Join the voice channel",
+      "surface": "panel"
+    },
+    {
+      "id": "leave",
+      "label": "Leave the current call",
+      "surface": "panel"
+    },
+    {
+      "id": "deafen",
+      "label": "Toggle deafen in the current call",
+      "surface": "panel"
+    },
+    {
+      "id": "save",
+      "label": "Save AutoJoinVC settings",
+      "surface": "panel"
+    },
+    {
+      "id": "activate",
+      "label": "Restore saved AutoJoinVC settings",
+      "surface": "activation"
+    }
+  ]
+}
